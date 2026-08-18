@@ -1,0 +1,106 @@
+name: win-build-and-release
+
+on:
+  push:
+    tags:
+      - 'v*'                # 推送 v1.0.0 这类标签时触发发布
+  release:
+    types: [created]        # 手动在 GitHub 上创建 Release 时也触发
+  # 原 push 和 pull_request 保留，用于普通 CI 测试
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  # ---- 构建与测试（包含打包） ----
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2022, windows-2025]
+        arch: [x64]          # 如需 arm64 可取消注释并调整打包
+
+    concurrency:
+      group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-Windows-${{ matrix.os }}-${{ matrix.arch }}
+      cancel-in-progress: true
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: 3.0.8
+        actions-cache-folder: '.xmake-cache'
+        actions-cache-key: 'windows'
+
+    # 注意：原 cache 未使用 actions/cache，且 key 未优化，可自行添加
+    # 建议使用 actions/cache 缓存 ~/.xmake，并改用 requirements.txt 做 hash
+
+    - name: Configure
+      shell: cmd
+      run: |
+        pip install -r requirements.txt      
+        xmake f -c -k shared --feedback=n -y -vD
+
+    - name: Build core
+      shell: cmd
+      run: |
+        xmake -b core
+
+    - name: Small test
+      shell: cmd
+      run: |
+        xmake r small-test
+
+    - name: Test python
+      shell: cmd
+      run: |
+        set PYTHONPATH=.
+        python hikyuu/test/test.py
+
+    # ---- 打包动态库 ----
+    - name: Package DLLs
+      shell: powershell
+      run: |
+        # 创建输出目录
+        New-Item -ItemType Directory -Force -Path artifacts
+        # 查找所有 .dll 文件（根据实际编译输出位置调整）
+        Get-ChildItem -Recurse -Filter *.dll | Copy-Item -Destination artifacts\
+        # 用 zip 打包，并命名包含 OS 和架构
+        $zipName = "hikyuu-core-${{ matrix.os }}-${{ matrix.arch }}.zip"
+        Compress-Archive -Path artifacts\* -DestinationPath $zipName
+        # 将 zip 移到当前目录（以便 upload-artifact 能找到）
+        Move-Item -Path $zipName -Destination .
+
+    - name: Upload temporary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: hikyuu-core-${{ matrix.os }}-${{ matrix.arch }}
+        path: hikyuu-core-*.zip
+
+  # ---- 发布到 GitHub Release（仅 tag/release 触发） ----
+  release:
+    needs: build
+    runs-on: ubuntu-latest   # 发布 job 可跨平台，用 ubuntu 即可
+    # 仅在 tag 或 release 事件时执行（push/PR 时不执行）
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+
+    steps:
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: List downloaded files (debug)
+        run: ls -R release-artifacts
+        shell: bash
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
