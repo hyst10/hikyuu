@@ -68,7 +68,7 @@ jobs:
         # 创建输出目录
         New-Item -ItemType Directory -Force -Path artifacts
         # 查找所有 .dll 文件（根据实际编译输出位置调整）
-        Get-ChildItem -Recurse -Filter *.dll -Exclude "artifacts\*" | Copy-Item -Destination artifacts\
+        Get-ChildItem -Path "build/windows/x64/release" -Filter *.dll | Copy-Item -Destination artifacts\
         # 用 zip 打包，并命名包含 OS 和架构
         $zipName = "hikyuu-core-${{ matrix.os }}-${{ matrix.arch }}.zip"
         Compress-Archive -Path artifacts\* -DestinationPath $zipName
