@@ -7,9 +7,9 @@ on:
   release:
     types: [created]        # 手动在 GitHub 上创建 Release 时也触发
   # 原 push 和 pull_request 保留，用于普通 CI 测试
-  push:
-    branches:
-      - master
+  #push:
+    #branches:
+      #- master
   pull_request:
     branches:
       - master
